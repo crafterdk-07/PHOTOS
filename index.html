@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PhotoDrop Box - Cloudinary</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <style>
+        :root { --primary: #4F46E5; --bg-color: #F3F4F6; --card-bg: #FFFFFF; --text: #1F2937; }
+        * { box-sizing: border-box; font-family: 'Segoe UI', Tahoma, sans-serif; }
+        body { background-color: var(--bg-color); color: var(--text); margin: 0; padding: 20px; }
+        .container { max-width: 900px; margin: 0 auto; }
+        h1 { text-align: center; color: var(--primary); }
+        .section-card { background: var(--card-bg); padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-bottom: 20px; }
+        input[type="text"], input[type="file"] { width: 100%; padding: 12px; margin: 10px 0; border: 1px solid #D1D5DB; border-radius: 8px; outline: none; }
+        button { background: var(--primary); color: white; border: none; padding: 12px 20px; border-radius: 8px; cursor: pointer; font-weight: bold; width: 100%; transition: 0.2s; }
+        button:hover { background: #4338CA; }
+        button:disabled { background: #9CA3AF; cursor: not-allowed; }
+        .btn-secondary { background: #10B981; }
+        .btn-secondary:hover { background: #059669; }
+        .hidden { display: none !important; }
+        .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 15px; margin-top: 20px; }
+        .photo-card { border: 1px solid #E5E7EB; border-radius: 8px; padding: 10px; text-align: center; background: #FAFAFA; }
+        .photo-card img { width: 100%; height: 150px; object-fit: cover; border-radius: 6px; margin-bottom: 10px; }
+        .folder-header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
+        
+        /* Modal Popup */
+        .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); justify-content: center; align-items: center; z-index: 1000; }
+        .modal-content { background: white; padding: 30px; border-radius: 12px; text-align: center; max-width: 350px; width: 90%; }
+        #qrcode { display: flex; justify-content: center; margin: 20px 0; }
+        .close-btn { background: #EF4444; margin-top: 10px; }
+        .close-btn:hover { background: #DC2626; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1 id="mainTitle">PhotoDrop Box</h1>
+
+    <div id="viewerSection" class="section-card hidden">
+        <h2>📁 Folder: <span id="viewingFolderName"></span></h2>
+        <p>Photos from this event:</p>
+        <div id="viewerGallery" class="gallery">Loading photos...</div>
+    </div>
+
+    <div id="creatorMode">
+        <div id="createFolderSection" class="section-card">
+            <h3>Create a New Folder</h3>
+            <input type="text" id="folderName" placeholder="Enter Event/Folder Name (e.g. Birthday Party)">
+            <button onclick="createFolder()">Create Folder</button>
+        </div>
+
+        <div id="workspaceSection" class="section-card hidden">
+            <div class="folder-header">
+                <h2>📁 <span id="displayFolderName"></span></h2>
+                <button class="btn-secondary" style="width: auto;" onclick="generateFolderQR()">Get Folder QR</button>
+            </div>
+            
+            <hr style="border: 0; border-top: 1px solid #E5E7EB; margin: 20px 0;">
+
+            <h3>Upload Photos</h3>
+            <input type="file" id="photoUpload" accept="image/*" multiple>
+            <button id="uploadBtn" onclick="uploadPhotos()">Upload to Cloudinary</button>
+            <p id="uploadStatus" style="color: green; font-weight: bold; margin-top: 10px;"></p>
+
+            <div id="gallery" class="gallery"></div>
+        </div>
+    </div>
+</div>
+
+<div id="qrModal" class="modal">
+    <div class="modal-content">
+        <h3 id="modalTitle">Scan QR Code</h3>
+        <div id="qrcode"></div>
+        <p id="qrLinkText" style="font-size: 12px; word-break: break-all; color: #6B7280;"></p>
+        <button class="close-btn" onclick="closeModal()">Close</button>
+    </div>
+</div>
+
+<script>
+    // ==========================================
+    // ⚙️ CLOUDINARY CONFIGURATION (YAHAN APNI DETAILS DALEIN)
+    // ==========================================
+    const cloudName = "dwppbfayt"; 
+    const uploadPreset = "PHOTOS"; 
+    // ==========================================
+
+    let currentFolderTag = "";
+    const appUrl = window.location.href.split('?')[0]; // Current Website URL
+
+    // --- 1. Check if user came from a Folder QR Code (Viewer Mode) ---
+    window.onload = async () => {
+        const urlParams = new URLSearchParams(window.location.search);
+        const folderToView = urlParams.get('folder');
+        
+        if (folderToView) {
+            document.getElementById('creatorMode').classList.add('hidden');
+            document.getElementById('viewerSection').classList.remove('hidden');
+            document.getElementById('viewingFolderName').innerText = folderToView;
+            fetchFolderPhotos(folderToView);
+        }
+    };
+
+    // --- 2. Create Folder ---
+    function createFolder() {
+        const nameInput = document.getElementById('folderName').value.trim();
+        if(!nameInput) return alert("Please enter a folder name!");
+        
+        // Convert to Cloudinary tag format (lowercase, no spaces)
+        currentFolderTag = nameInput.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
+        
+        document.getElementById('displayFolderName').innerText = nameInput;
+        document.getElementById('createFolderSection').classList.add('hidden');
+        document.getElementById('workspaceSection').classList.remove('hidden');
+    }
+
+    // --- 3. Upload to Cloudinary ---
+    async function uploadPhotos() {
+        const files = document.getElementById('photoUpload').files;
+        if(files.length === 0) return alert("Select at least one photo!");
+
+        const btn = document.getElementById('uploadBtn');
+        const status = document.getElementById('uploadStatus');
+        btn.disabled = true;
+        
+        for(let i = 0; i < files.length; i++) {
+            status.innerText = `Uploading ${i+1} of ${files.length}...`;
+            
+            const formData = new FormData();
+            formData.append('file', files[i]);
+            formData.append('upload_preset', uploadPreset);
+            formData.append('tags', currentFolderTag); // Tag = Folder Name
+
+            try {
+                const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/image/upload`, {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await res.json();
+                
+                // Add to gallery
+                const card = document.createElement('div');
+                card.className = 'photo-card';
+                card.innerHTML = `
+                    <img src="${data.secure_url}">
+                    <button onclick="showQR('${data.secure_url}', 'Download Photo')">Get QR</button>
+                `;
+                document.getElementById('gallery').appendChild(card);
+            } catch (err) {
+                console.error("Upload failed", err);
+            }
+        }
+        status.innerText = "Upload Complete!";
+        btn.disabled = false;
+        document.getElementById('photoUpload').value = "";
+    }
+
+    // --- 4. Fetch Folder Photos (For Viewers) ---
+    async function fetchFolderPhotos(folderTag) {
+        const gallery = document.getElementById('viewerGallery');
+        try {
+            // Fetching list of images using Cloudinary tags JSON
+            const res = await fetch(`https://res.cloudinary.com/${cloudName}/image/list/${folderTag}.json`);
+            if(!res.ok) throw new Error("Folder not found or no images yet.");
+            
+            const data = await res.json();
+            gallery.innerHTML = ""; // Clear loading text
+            
+            data.resources.forEach(img => {
+                // Construct image URL from Cloudinary version and public_id
+                const imgUrl = `https://res.cloudinary.com/${cloudName}/image/upload/v${img.version}/${img.public_id}.${img.format}`;
+                const card = document.createElement('div');
+                card.className = 'photo-card';
+                card.innerHTML = `<a href="${imgUrl}" target="_blank"><img src="${imgUrl}"></a>`;
+                gallery.appendChild(card);
+            });
+        } catch (error) {
+            console.error(error);
+            gallery.innerHTML = "Folder empty or you forgot to disable 'Resource List' restriction in Cloudinary Security Settings.";
+        }
+    }
+
+    // --- 5. Generate Folder QR ---
+    function generateFolderQR() {
+        // Creates a link to YOUR website with the folder tag in URL
+        const folderLink = `${appUrl}?folder=${currentFolderTag}`;
+        showQR(folderLink, "Folder Link");
+    }
+
+    // --- 6. Modal & QR Code Logic ---
+    function showQR(link, title) {
+        document.getElementById('modalTitle').innerText = title;
+        document.getElementById('qrLinkText').innerText = link;
+        const qrContainer = document.getElementById('qrcode');
+        qrContainer.innerHTML = "";
+        
+        new QRCode(qrContainer, { text: link, width: 200, height: 200 });
+        document.getElementById('qrModal').style.display = "flex";
+    }
+
+    function closeModal() {
+        document.getElementById('qrModal').style.display = "none";
+    }
+</script>
+
+</body>
+</html>
